@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1">
+<title>WebRTC Test</title>
+
+<style>
+  body {
+    font-family: system-ui;
+    padding: 15px;
+  }
+
+  button {
+    padding: 12px;
+    margin: 5px 0;
+    font-size: 16px;
+  }
+
+  textarea {
+    width: 100%;
+    height: 130px;
+    box-sizing: border-box;
+  }
+
+  #status {
+    font-weight: bold;
+    margin: 15px 0;
+  }
+
+  #log {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #eee;
+    padding: 10px;
+    min-height: 60px;
+  }
+</style>
+</head>
+
+<body>
+
+<h2>WebRTC P2P Test</h2>
+
+<div id="status">Disconnected</div>
+
+<button onclick="createOffer()">
+  1. Create Offer
+</button>
+
+<button onclick="createAnswer()">
+  2. Create Answer
+</button>
+
+<button onclick="applyAnswer()">
+  3. Apply Answer
+</button>
+
+<h3>Local SDP</h3>
+
+<textarea id="local" readonly></textarea>
+
+<button onclick="copySDP()">
+  Copy Local SDP
+</button>
+
+<h3>Remote SDP</h3>
+
+<textarea id="remote"
+  placeholder="Paste remote SDP here"></textarea>
+
+<hr>
+
+<button onclick="send('PLAY')">
+  ▶ Play
+</button>
+
+<button onclick="send('STOP')">
+  ■ Stop
+</button>
+
+<h3>Log</h3>
+<div id="log"></div>
+
+<script>
+
+const config = {
+  iceServers: [
+    {
+      urls: "stun:stun.l.google.com:19302"
+    }
+  ]
+};
+
+let pc;
+let channel;
+
+const $ = id => document.getElementById(id);
+
+function log(message) {
+  $("log").textContent += message + "\n";
+}
+
+function status(message) {
+  $("status").textContent = message;
+  log(message);
+}
+
+function init() {
+
+  pc = new RTCPeerConnection(config);
+
+  pc.onconnectionstatechange = () => {
+    status("Connection: " + pc.connectionState);
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    log("ICE: " + pc.iceConnectionState);
+  };
+
+  pc.ondatachannel = event => {
+    setupChannel(event.channel);
+  };
+}
+
+function setupChannel(ch) {
+
+  channel = ch;
+
+  channel.onopen = () => {
+    status("CONNECTED");
+  };
+
+  channel.onclose = () => {
+    status("Channel closed");
+  };
+
+  channel.onmessage = event => {
+    log("Received: " + event.data);
+  };
+}
+
+function waitForICE() {
+
+  return new Promise(resolve => {
+
+    if (pc.iceGatheringState === "complete") {
+      resolve();
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      pc.removeEventListener(
+        "icegatheringstatechange",
+        check
+      );
+      resolve();
+    }, 15000);
+
+    function check() {
+      if (pc.iceGatheringState === "complete") {
+        clearTimeout(timeout);
+        pc.removeEventListener(
+          "icegatheringstatechange",
+          check
+        );
+        resolve();
+      }
+    }
+
+    pc.addEventListener(
+      "icegatheringstatechange",
+      check
+    );
+  });
+}
+
+async function createOffer() {
+
+  try {
+    init();
+
+    setupChannel(
+      pc.createDataChannel("commands")
+    );
+
+    const offer = await pc.createOffer();
+
+    await pc.setLocalDescription(offer);
+
+    await waitForICE();
+
+    $("local").value =
+      JSON.stringify(pc.localDescription);
+
+    status("Offer ready");
+
+  } catch (e) {
+    log("Error: " + e.message);
+  }
+}
+
+async function createAnswer() {
+
+  try {
+    init();
+
+    const offer = JSON.parse(
+      $("remote").value
+    );
+
+    await pc.setRemoteDescription(offer);
+
+    const answer = await pc.createAnswer();
+
+    await pc.setLocalDescription(answer);
+
+    await waitForICE();
+
+    $("local").value =
+      JSON.stringify(pc.localDescription);
+
+    status("Answer ready");
+
+  } catch (e) {
+    log("Error: " + e.message);
+  }
+}
+
+async function applyAnswer() {
+
+  try {
+    const answer = JSON.parse(
+      $("remote").value
+    );
+
+    await pc.setRemoteDescription(answer);
+
+    status("Waiting for connection");
+
+  } catch (e) {
+    log("Error: " + e.message);
+  }
+}
+
+function send(command) {
+
+  if (!channel ||
+      channel.readyState !== "open") {
+
+    log("Not connected");
+    return;
+  }
+
+  channel.send(command);
+
+  log("Sent: " + command);
+}
+
+async function copySDP() {
+
+  try {
+    await navigator.clipboard.writeText(
+      $("local").value
+    );
+
+    log("SDP copied");
+
+  } catch (e) {
+    $("local").select();
+    log("Select and copy SDP manually");
+  }
+}
+
+</script>
+
+</body>
+</html>
